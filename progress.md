@@ -2,7 +2,7 @@
 
 **Update Interval:** +3 Hours  
 **Current Version:** 1.0  
-**Core Tech Stack:** FastAPI,Gemini 2.5 Flash
+**Core Tech Stack:** FastAPI,Gemini 2.5 Flash.
 
 ## 🏗️ Architectural Milestones Achieved
 * **Decoupled Database Architecture:** Successfully split the storage layer to ensure high performance. 
