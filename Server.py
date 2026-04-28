@@ -14,6 +14,8 @@ from PIL import Image
 import io
 from google import genai
 
+pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+
 app = FastAPI(title="Virtual Hospital API", version="1.0")
 
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -93,6 +95,56 @@ async def register_doctor(name: str, specialty: str, admin_password: str):
     db["doctors"][doc_id] = {"name": f"Dr. {name}", "specialty": specialty, "patients_queue": []}
     save_db(db)
     return {"status": "Success", "doctor_id": doc_id}
+
+
+@app.post("/analyze/blood-report")
+async def analyze_blood_report(file: UploadFile = File(...)):
+    try:
+        # 1. Read Image into OpenCV
+        contents = await file.read()
+        nparr = np.frombuffer(contents, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+        # 2. Advanced OpenCV Preprocessing (fixes shadows on paper)
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        
+        # Adaptive thresholding handles uneven lighting from phone cameras
+        thresh = cv2.adaptiveThreshold(
+            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
+        )
+
+        # 3. Tesseract OCR Extraction
+        # psm 6 assumes a single uniform block of text (good for tables/reports)
+        custom_config = r'--oem 3 --psm 6'
+        extracted_text = pytesseract.image_to_string(thresh, config=custom_config)
+
+        # 4. Structure the Data via Gemini
+        prompt = f"""
+        You are a medical data parser. Extract the biomarkers, their values, and their status (High/Low/Normal) from this raw OCR text of a blood report.
+        
+        Return ONLY a strict JSON object in this exact format, with no markdown formatting or extra text:
+        {{
+            "data": [
+                {{"Biomarker": "RBC", "Value": "5.0 mill/cumm", "Status": "Normal"}},
+                {{"Biomarker": "MCV", "Value": "80.0 fL", "Status": "Low"}}
+            ]
+        }}
+        
+        RAW OCR TEXT:
+        {extracted_text}
+        """
+        
+        # Use your aggressive retry loop!
+        response_text = call_gemini_with_retry(prompt)
+        
+        # Clean the JSON output just in case Gemini wraps it in ```json ... ```
+        cleaned_json = response_text.replace("```json", "").replace("```", "").strip()
+        
+        return json.loads(cleaned_json)
+
+    except Exception as e:
+        print(f"OCR Error: {str(e)}")
+        return {"message": "OCR Extraction Failed. Please ensure the image is clear and legible."}
 
 @app.post("/auth/login")
 async def login(user_id: str):
